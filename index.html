@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vibe Coding Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="noise"></div>
+  <div id="confetti-root"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <div>
+        <div class="brand-title">Vibe Coding Lab</div>
+        <div class="brand-sub">Build loud. Demo loud. Win louder.</div>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <div class="chip chip-outline" id="session-chip">Session —</div>
+      <div class="chip chip-outline" id="online-chip">Arena —</div>
+      <button class="btn btn-ghost btn-sm hidden" id="refresh-btn" type="button">Refresh</button>
+      <button class="btn btn-ghost btn-sm hidden" id="logout-btn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section id="login-view" class="view view-login">
+      <div class="hero-word">VIBE</div>
+      <div class="login-grid">
+        <div class="hero-card brutal-card glass lift">
+          <div class="eyebrow-row">
+            <span class="chip chip-blue">BrightCHAMPS</span>
+            <span class="chip chip-magenta">Neo-Brutal</span>
+            <span class="chip chip-lime">Live Demo Arena</span>
+          </div>
+          <h1>World’s best<br />vibe coding<br /><span class="accent-lime">platform</span></h1>
+          <p class="hero-copy">
+            Shared login. Live presenter queue. Name picker. Voting. Feed. Comments. Leaderboard. Zero boring energy.
+          </p>
+          <div class="hero-points">
+            <div class="pill">Random presenter announcements</div>
+            <div class="pill">Up to 5 stars per demo</div>
+            <div class="pill">Live leaderboard</div>
+            <div class="pill">Hackathon feed + comments</div>
+          </div>
+        </div>
+
+        <div class="login-card brutal-card paper lift">
+          <div class="section-head tight">
+            <div>
+              <div class="eyebrow">Trust-based login</div>
+              <h2>Enter the arena</h2>
+            </div>
+            <div class="chip chip-yellow">Same password</div>
+          </div>
+
+          <form id="login-form" class="stack-lg">
+            <label class="field">
+              <span class="field-label">Your name</span>
+              <select id="login-name" class="input" required></select>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Password</span>
+              <input id="login-password" class="input" type="password" placeholder="Enter shared password" required />
+            </label>
+
+            <button class="btn btn-black" type="submit">Login to Vibe Coding Lab</button>
+            <p class="small muted">Choose your real name. Password is shared and trust-based.</p>
+            <p class="error-text" id="login-error"></p>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section id="app-view" class="view hidden">
+      <div class="main-grid">
+        <aside class="sidebar brutal-card glass">
+          <div class="sidebar-profile">
+            <div class="avatar" id="user-avatar">P</div>
+            <div>
+              <div class="sidebar-name" id="sidebar-name">Paul</div>
+              <div class="sidebar-role" id="sidebar-role">PM</div>
+            </div>
+          </div>
+
+          <nav class="nav stack-sm">
+            <button class="nav-btn active" data-tab="arena">Arena</button>
+            <button class="nav-btn" data-tab="projects">Projects</button>
+            <button class="nav-btn" data-tab="demo">Demo Day</button>
+            <button class="nav-btn" data-tab="feed">Hack Feed</button>
+            <button class="nav-btn" data-tab="leaderboard">Leaderboard</button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <div class="eyebrow">Today’s energy</div>
+            <div class="energy-meter">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <p class="small muted">If it runs, it counts.</p>
+          </div>
+        </aside>
+
+        <section class="content">
+          <div class="tab active" data-content="arena">
+            <div class="section-head">
+              <div>
+                <div class="eyebrow">Live arena</div>
+                <h2>Demo day control room</h2>
+              </div>
+              <div class="chip chip-red" id="session-health-chip">Healthy demo day?</div>
+            </div>
+
+            <div class="stats-grid">
+              <div class="stat-card brutal-card glass">
+                <div class="stat-label">Live in arena</div>
+                <div class="stat-value" id="live-count">0</div>
+                <div class="stat-meta">People currently logged in</div>
+              </div>
+              <div class="stat-card brutal-card glass">
+                <div class="stat-label">Presenters today</div>
+                <div class="stat-value" id="active-demo-count">0</div>
+                <div class="stat-meta">Active demo-day projects</div>
+              </div>
+              <div class="stat-card brutal-card glass">
+                <div class="stat-label">Current presenter</div>
+                <div class="stat-value smallish" id="current-presenter-stat">—</div>
+                <div class="stat-meta">Name + project announced live</div>
+              </div>
+              <div class="stat-card brutal-card glass">
+                <div class="stat-label">Voting</div>
+                <div class="stat-value smallish" id="voting-state-stat">Closed</div>
+                <div class="stat-meta">Vote window per presentation</div>
+              </div>
+            </div>
+
+            <div class="two-col-grid top-gap">
+              <div class="brutal-card paper">
+                <div class="section-head tight">
+                  <div>
+                    <div class="eyebrow">Now presenting</div>
+                    <h3>Big stage card</h3>
+                  </div>
+                  <div class="chip chip-magenta" id="timer-chip">00:00</div>
+                </div>
+                <div class="big-presenter-card">
+                  <div class="presenter-name" id="current-presenter-name">No presenter yet</div>
+                  <div class="presenter-project" id="current-presenter-project">Spin the wheel or select from lineup</div>
+                  <div class="presenter-announcement" id="current-announcement">Next up energy starts here.</div>
+                </div>
+                <div class="now-next-grid">
+                  <div class="mini-card">
+                    <div class="mini-label">Next</div>
+                    <div class="mini-title" id="next-presenter-card">—</div>
+                  </div>
+                  <div class="mini-card">
+                    <div class="mini-label">Upcoming</div>
+                    <div class="mini-title" id="upcoming-count-card">0 more in queue</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="brutal-card glass">
+                <div class="section-head tight">
+                  <div>
+                    <div class="eyebrow">Chaos, but organized</div>
+                    <h3>Presenter picker</h3>
+                  </div>
+                  <div class="chip chip-lime">Name + project</div>
+                </div>
+                <div class="wheel-box">
+                  <div class="wheel-result" id="wheel-result">Ready to spin</div>
+                  <div class="wheel-sub" id="wheel-sub">Pick today’s next demo.</div>
+                  <div class="btn-row wrap">
+                    <button class="btn btn-lime" id="spin-wheel-btn" type="button">Spin active presenters</button>
+                    <button class="btn btn-ghost" id="shuffle-queue-btn" type="button">Randomize full queue</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="three-col-grid top-gap">
+              <div class="brutal-card paper span-2">
+                <div class="section-head tight">
+                  <div>
+                    <div class="eyebrow">Healthy presentation roster</div>
+                    <h3>Active participants for this demo day</h3>
+                  </div>
+                  <div class="chip chip-blue" id="roster-count-chip">0 active</div>
+                </div>
+                <div id="lineup-list" class="lineup-list"></div>
+              </div>
+
+              <div class="brutal-card glass" id="admin-panel-wrap">
+                <div class="section-head tight">
+                  <div>
+                    <div class="eyebrow">Command center</div>
+                    <h3>Admin controls</h3>
+                  </div>
+                  <div class="chip chip-yellow" id="admin-chip">Admin only</div>
+                </div>
+                <div class="stack-sm">
+                  <button class="btn btn-black full" id="announce-current-btn" type="button">Announce selected presenter</button>
+                  <button class="btn btn-magenta full" id="start-demo-btn" type="button">Start 5 min demo timer</button>
+                  <button class="btn btn-yellow full" id="open-voting-btn" type="button">Open 30s voting</button>
+                  <button class="btn btn-ghost full" id="close-voting-btn" type="button">Close voting</button>
+                  <button class="btn btn-ghost full" id="next-presenter-btn" type="button">Advance to next presenter</button>
+                  <button class="btn btn-ghost full" id="end-session-btn" type="button">Reset current session</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab" data-content="projects">
+            <div class="section-head">
+              <div>
+                <div class="eyebrow">Your build</div>
+                <h2>Project submission</h2>
+              </div>
+              <div class="chip chip-blue">Sheet-first backend</div>
+            </div>
+
+            <div class="two-col-grid">
+              <div class="brutal-card paper">
+                <form id="project-form" class="stack-md">
+                  <input type="hidden" id="project-id" />
+                  <label class="field">
+                    <span class="field-label">Project title</span>
+                    <input id="project-title" class="input" type="text" maxlength="80" placeholder="AI Ad Analyzer" required />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Category</span>
+                    <select id="project-category" class="input">
+                      <option>Product</option>
+                      <option>Growth</option>
+                      <option>Operations</option>
+                      <option>AI</option>
+                      <option>Internal Tooling</option>
+                      <option>Design / UX</option>
+                      <option>Quality</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Demo date</span>
+                    <input id="project-session-date" class="input" type="date" required />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">What are you building?</span>
+                    <textarea id="project-description" class="input textarea" maxlength="300" placeholder="One clear sentence. What problem does this solve?" required></textarea>
+                  </label>
+                  <label class="checkbox-row">
+                    <input id="project-active-demo" type="checkbox" checked />
+                    <span>Make me an active presenter for this demo day</span>
+                  </label>
+                  <div class="btn-row wrap">
+                    <button class="btn btn-black" type="submit">Save my project</button>
+                    <button class="btn btn-ghost" id="clear-project-btn" type="button">Clear</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="brutal-card glass">
+                <div class="section-head tight">
+                  <div>
+                    <div class="eyebrow">Your latest entry</div>
+                    <h3>My current demo card</h3>
+                  </div>
+                  <div class="chip chip-magenta">Live</div>
+                </div>
+                <div id="my-project-card" class="empty-state compact">No project submitted yet.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab" data-content="demo">
+            <div class="section-head">
+              <div>
+                <div class="eyebrow">Audience interaction</div>
+                <h2>Vote on the current presenter</h2>
+              </div>
+              <div class="chip chip-yellow" id="vote-status-chip">Voting closed</div>
+            </div>
+
+            <div class="two-col-grid">
+              <div class="brutal-card paper">
+                <div class="vote-stage">
+                  <div class="vote-presenter" id="vote-presenter-name">No presenter live</div>
+                  <div class="vote-project" id="vote-project-title">Wait for the next announcement.</div>
+                  <div class="vote-rule">One vote per presenter, per person. Minimum 1 star. Maximum 5 stars.</div>
+                </div>
+                <div class="star-row" id="star-row"></div>
+                <div class="vote-feedback" id="vote-feedback">Voting opens when the presenter is live.</div>
+              </div>
+
+              <div class="brutal-card glass">
+                <div class="section-head tight">
+                  <div>
+                    <div class="eyebrow">How it works</div>
+                    <h3>Fast and fair</h3>
+                  </div>
+                  <div class="chip chip-lime">Live score</div>
+                </div>
+                <ul class="brutal-list">
+                  <li>Voting is tied to the <b>current presenter only</b>.</li>
+                  <li>Each logged-in participant can vote <b>once</b> per presenter.</li>
+                  <li>Leaderboard updates after every vote refresh.</li>
+                  <li>When voting closes, the next presenter steps up.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab" data-content="feed">
+            <div class="section-head">
+              <div>
+                <div class="eyebrow">Build in public</div>
+                <h2>Live hackathon feed</h2>
+              </div>
+              <div class="chip chip-magenta">Weekly motion</div>
+            </div>
+
+            <div class="two-col-grid feed-grid">
+              <div class="brutal-card paper">
+                <form id="feed-form" class="stack-md">
+                  <label class="field">
+                    <span class="field-label">Post an update</span>
+                    <textarea id="feed-message" class="input textarea" maxlength="280" placeholder="Built the first version. Need help with the leaderboard animation."></textarea>
+                  </label>
+                  <button class="btn btn-black" type="submit">Post to feed</button>
+                </form>
+              </div>
+
+              <div class="stack-md" id="feed-list"></div>
+            </div>
+          </div>
+
+          <div class="tab" data-content="leaderboard">
+            <div class="section-head">
+              <div>
+                <div class="eyebrow">Scoreboard</div>
+                <h2>Live leaderboard for the day</h2>
+              </div>
+              <div class="chip chip-lime">Rolling average</div>
+            </div>
+            <div class="brutal-card paper">
+              <div id="leaderboard-list" class="leaderboard-list"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
