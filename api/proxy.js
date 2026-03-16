@@ -102,7 +102,7 @@ async function upsertMeta(entries) {
 async function bootstrap(viewer) {
   const sessionDate = await getSessionDate();
 
-  const [usersRes, projectsRes, votesRes, feedRes, commentsRes, metaRes, presenceRes, leaderboardRes] = await Promise.all([
+  const [usersRes, projectsRes, votesRes, feedRes, commentsRes, metaRes, presenceRes, leaderboardRes, ppRes] = await Promise.all([
     supabase.from('users').select('*'),
     supabase.from('projects').select('*').eq('session_date', sessionDate),
     supabase.from('votes').select('*').eq('session_date', sessionDate),
@@ -111,12 +111,23 @@ async function bootstrap(viewer) {
     supabase.from('meta').select('*'),
     supabase.from('presence').select('*').eq('session_date', sessionDate).gte('last_seen_at', new Date(Date.now() - 2 * 60 * 1000).toISOString()),
     supabase.from('leaderboard').select('*').eq('session_date', sessionDate),
+    supabase.from('project_presenters').select('*'),
   ]);
 
   const meta = {};
   (metaRes.data || []).forEach((row) => { meta[row.key] = row.value; });
 
-  const projects = rowsToCamel(projectsRes.data);
+  // Build a map of project_id -> all presenter names
+  const presentersByProject = {};
+  (ppRes.data || []).forEach((row) => {
+    if (!presentersByProject[row.project_id]) presentersByProject[row.project_id] = [];
+    presentersByProject[row.project_id].push(row.presenter_name);
+  });
+
+  const projects = rowsToCamel(projectsRes.data).map((p) => ({
+    ...p,
+    presenters: presentersByProject[p.projectId] || [p.presenterName],
+  }));
   const activeProjects = projects.filter((p) => p.activeDemoDay === true);
 
   return {
@@ -153,13 +164,16 @@ async function saveProject(body) {
   const sessionDate = required(body.sessionDate, 'sessionDate is required.');
   const now = new Date().toISOString();
 
-  // Check if project exists for this presenter+session
-  const { data: existing } = await supabase
-    .from('projects')
-    .select('project_id, queue_order, created_at')
-    .eq('presenter_name', presenterName)
-    .eq('session_date', sessionDate)
-    .maybeSingle();
+  // Check if project exists by projectId (allows multiple projects per person)
+  let existing = null;
+  if (body.projectId) {
+    const { data } = await supabase
+      .from('projects')
+      .select('project_id, queue_order, created_at')
+      .eq('project_id', body.projectId)
+      .maybeSingle();
+    existing = data;
+  }
 
   const row = {
     session_date: sessionDate,
@@ -172,12 +186,14 @@ async function saveProject(body) {
     updated_at: now,
   };
 
+  let projectId;
+
   if (existing) {
-    // Update existing
+    projectId = existing.project_id;
     const { error } = await supabase
       .from('projects')
       .update(row)
-      .eq('project_id', existing.project_id);
+      .eq('project_id', projectId);
     if (error) throw error;
   } else {
     // Get next queue order
@@ -192,9 +208,16 @@ async function saveProject(body) {
     row.queue_order = (maxRow?.queue_order || 0) + 1;
     row.created_at = now;
 
-    const { error } = await supabase.from('projects').insert(row);
+    const { data: inserted, error } = await supabase.from('projects').insert(row).select('project_id').single();
     if (error) throw error;
+    projectId = inserted.project_id;
   }
+
+  // Auto-add creator to project_presenters
+  await supabase.from('project_presenters').upsert({
+    project_id: projectId,
+    presenter_name: presenterName,
+  }, { onConflict: 'project_id,presenter_name' });
 
   return { ok: true };
 }
@@ -228,15 +251,29 @@ async function vote(body) {
   const stars = Math.max(1, Math.min(5, Number(body.stars || 1)));
   const now = new Date().toISOString();
 
+  // Resolve project_id from the current presenter's active project
+  const { data: project } = await supabase
+    .from('projects')
+    .select('project_id')
+    .eq('session_date', sessionDate)
+    .eq('presenter_name', presenterName)
+    .eq('active_demo_day', true)
+    .limit(1)
+    .maybeSingle();
+
+  const projectId = project?.project_id || null;
+
+  // Check: same person cannot vote twice for the same project
   const { data: existing } = await supabase
     .from('votes')
     .select('vote_id')
     .eq('session_date', sessionDate)
-    .eq('presenter_name', presenterName)
+    .eq('project_id', projectId)
     .eq('voter_name', voterName)
     .maybeSingle();
 
   if (existing) {
+    // Update existing vote (allow changing stars)
     const { error } = await supabase
       .from('votes')
       .update({ stars, updated_at: now })
@@ -247,6 +284,7 @@ async function vote(body) {
       session_date: sessionDate,
       presenter_name: presenterName,
       voter_name: voterName,
+      project_id: projectId,
       stars,
     });
     if (error) throw error;
