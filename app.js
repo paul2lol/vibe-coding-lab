@@ -129,6 +129,11 @@
     if (!state.user) return;
     try {
       const data = await apiGet("bootstrap", { viewer: state.user.name });
+      // Normalize meta string booleans/numbers once on receive
+      const m = data.meta || {};
+      m.votingOpen = m.votingOpen === 'true' || m.votingOpen === true;
+      if (m.votingEndsAt) m.votingEndsAt = Number(m.votingEndsAt) || new Date(m.votingEndsAt).getTime() || 0;
+      if (m.demoEndsAt) m.demoEndsAt = Number(m.demoEndsAt) || new Date(m.demoEndsAt).getTime() || 0;
       state.data = data;
       renderAll();
       if (showToastMsg) toast("Arena refreshed.");
@@ -164,6 +169,16 @@
     el("voting-state-stat").textContent = meta.votingOpen ? "Open" : "Closed";
     el("session-health-chip").textContent = activeProjects.length >= 4 ? `Healthy day • ${activeProjects.length}` : `Need more demos • ${activeProjects.length}`;
     el("roster-count-chip").textContent = `${activeProjects.length} active`;
+
+    // Voting-open visual state: bright theme when voting is live
+    const wasOpen = document.body.classList.contains("voting-live");
+    if (meta.votingOpen && currentProject) {
+      document.body.classList.add("voting-live");
+      if (!wasOpen) flashVotingBanner(true);
+    } else {
+      document.body.classList.remove("voting-live");
+      if (wasOpen) flashVotingBanner(false);
+    }
 
     renderCurrentPresenter(meta, currentProject, activeProjects);
     renderLineup(activeProjects, meta.currentProjectId);
@@ -956,6 +971,26 @@
     if (hr < 24) return `${hr}h ago`;
     const day = Math.floor(hr / 24);
     return `${day}d ago`;
+  }
+
+  function flashVotingBanner(isOpening) {
+    // Flash a full-width banner that fades out
+    const existing = document.querySelector(".voting-flash-banner");
+    if (existing) existing.remove();
+
+    const banner = document.createElement("div");
+    banner.className = "voting-flash-banner";
+    banner.textContent = isOpening ? "⚡ VOTING IS OPEN — Cast your stars now!" : "🔒 Voting closed";
+    banner.style.background = isOpening ? "linear-gradient(135deg, #ff3c5a, #ff8c00)" : "linear-gradient(135deg, #333, #555)";
+    document.body.appendChild(banner);
+
+    requestAnimationFrame(() => banner.classList.add("show"));
+    setTimeout(() => {
+      banner.classList.remove("show");
+      setTimeout(() => banner.remove(), 600);
+    }, isOpening ? 3500 : 2000);
+
+    if (isOpening) burstConfetti(30);
   }
 
   function toast(message, isError = false) {
