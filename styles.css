@@ -835,3 +835,9 @@ h3 { font-size: clamp(20px, 2.2vw, 30px); }
   .brand-sub { display: none; }
   .comment-form { flex-direction: column; }
 }
+
+/* Co-presenters */
+.co-presenter-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.co-pill { display: inline-flex; align-items: center; gap: 4px; }
+.co-remove { background: none; border: none; color: inherit; cursor: pointer; font-size: 14px; opacity: .7; padding: 0 2px; }
+.co-remove:hover { opacity: 1; }

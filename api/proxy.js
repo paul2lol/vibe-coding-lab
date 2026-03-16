@@ -37,6 +37,10 @@ module.exports = async function handler(req, res) {
           return res.json(await uploadFeedImage(body));
         case 'heartFeed':
           return res.json(await heartFeed(body));
+        case 'addPresenter':
+          return res.json(await addPresenter(body));
+        case 'removePresenter':
+          return res.json(await removePresenter(body));
         default:
           return res.status(400).json({ ok: false, error: 'Unknown POST action.' });
       }
@@ -408,5 +412,41 @@ async function updateMeta(body) {
   const updates = body.updates || {};
   if (body.sessionDate) updates.sessionDate = body.sessionDate;
   await upsertMeta(updates);
+  return { ok: true };
+}
+
+async function addPresenter(body) {
+  const projectId = required(body.projectId, 'projectId is required.');
+  const presenterName = required(body.presenterName, 'presenterName is required.');
+
+  const { error } = await supabase.from('project_presenters').upsert({
+    project_id: projectId,
+    presenter_name: presenterName,
+  }, { onConflict: 'project_id,presenter_name' });
+  if (error) throw error;
+  return { ok: true };
+}
+
+async function removePresenter(body) {
+  const projectId = required(body.projectId, 'projectId is required.');
+  const presenterName = required(body.presenterName, 'presenterName is required.');
+
+  // Don't allow removing the original creator
+  const { data: project } = await supabase
+    .from('projects')
+    .select('presenter_name')
+    .eq('project_id', projectId)
+    .single();
+
+  if (project && project.presenter_name === presenterName) {
+    throw new Error('Cannot remove the original project creator.');
+  }
+
+  const { error } = await supabase
+    .from('project_presenters')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('presenter_name', presenterName);
+  if (error) throw error;
   return { ok: true };
 }

@@ -153,7 +153,7 @@
     const activeProjects = sortActiveProjects(data.activeProjects || []);
     const currentProject = activeProjects.find((p) => p.projectId === meta.currentProjectId) || null;
     const currentVote = data.votes?.find((v) => v.presenterName === meta.currentPresenterName && v.voterName === state.user.name) || null;
-    const myProject = (data.projects || []).find((p) => p.presenterName === state.user.name && p.sessionDate === data.sessionDate) || null;
+    const myProject = (data.projects || []).find((p) => p.sessionDate === data.sessionDate && (p.presenterName === state.user.name || (p.presenters || []).includes(state.user.name))) || null;
 
     el("session-chip").textContent = `Session ${formatDisplayDate(data.sessionDate)}`;
     el("online-chip").textContent = `${(data.onlineUsers || []).length} in arena`;
@@ -185,14 +185,14 @@
       projectEl.textContent = "Spin the wheel or pick from the active roster.";
       announcementEl.textContent = "Once selected, the platform announces both the person and the project.";
     } else {
-      nameEl.textContent = currentProject.presenterName;
+      nameEl.textContent = (currentProject.presenters || [currentProject.presenterName]).join(' & ');
       projectEl.textContent = currentProject.projectTitle;
       announcementEl.textContent = meta.lastAnnouncement || `${currentProject.presenterName} is presenting ${currentProject.projectTitle}.`;
     }
 
     const currentIdx = activeProjects.findIndex((p) => p.projectId === meta.currentProjectId);
     const next = currentIdx >= 0 ? activeProjects[currentIdx + 1] : activeProjects[0];
-    el("next-presenter-card").textContent = next ? `${next.presenterName} — ${next.projectTitle}` : "No next presenter";
+    el("next-presenter-card").textContent = next ? `${(next.presenters || [next.presenterName]).join(' & ')} — ${next.projectTitle}` : "No next presenter";
     el("upcoming-count-card").textContent = `${Math.max(0, activeProjects.length - (currentIdx + 1 || 0))} more in queue`;
 
     clearInterval(state.countdownTimer);
@@ -228,7 +228,7 @@
         <div class="lineup-item ${isCurrent ? "is-current" : ""}">
           <div class="lineup-rank">${index + 1}</div>
           <div>
-            <div class="lineup-name">${escapeHtml(project.presenterName)}</div>
+            <div class="lineup-name">${escapeHtml((project.presenters || [project.presenterName]).join(' & '))}</div>
             <div class="lineup-project">${escapeHtml(project.projectTitle)} • ${escapeHtml(project.category || "General")}</div>
           </div>
           <div class="lineup-actions">
@@ -251,6 +251,58 @@
       el("project-description").value = myProject?.description || "";
       el("project-active-demo").checked = myProject ? String(myProject.activeDemoDay) === "true" : true;
     }
+    renderCoPresenters(myProject);
+  }
+
+  function renderCoPresenters(myProject) {
+    const wrap = el("co-presenters-section");
+    if (!wrap) return;
+    if (!myProject || !myProject.projectId) {
+      wrap.style.display = "none";
+      return;
+    }
+    wrap.style.display = "";
+    const presenters = myProject.presenters || [myProject.presenterName];
+    const isCreator = myProject.presenterName === state.user.name;
+    const team = cfg.team.map((m) => m.name).filter((n) => !presenters.includes(n));
+
+    let html = `<div class="field-label" style="margin-bottom:8px">Co-presenters</div>`;
+    html += `<div class="co-presenter-list">`;
+    presenters.forEach((name) => {
+      const isOriginal = name === myProject.presenterName;
+      html += `<span class="pill co-pill">${escapeHtml(name)}${!isOriginal && isCreator ? ` <button type="button" class="co-remove" data-name="${escapeHtml(name)}">&times;</button>` : ""}</span>`;
+    });
+    html += `</div>`;
+
+    if (isCreator && team.length) {
+      html += `<div class="co-add-row" style="margin-top:8px;display:flex;gap:8px">
+        <select id="co-presenter-select" class="input" style="flex:1"><option value="">Add a teammate...</option>${team.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("")}</select>
+        <button type="button" class="btn btn-ghost btn-sm" id="co-add-btn">Add</button>
+      </div>`;
+    }
+
+    wrap.innerHTML = html;
+
+    // Bind events
+    const addBtn = el("co-add-btn");
+    if (addBtn) {
+      addBtn.addEventListener("click", async () => {
+        const select = el("co-presenter-select");
+        const name = select?.value;
+        if (!name) return;
+        await apiPost("addPresenter", { projectId: myProject.projectId, presenterName: name });
+        toast(`${name} added as co-presenter.`);
+        refreshData(false);
+      });
+    }
+    $$(".co-remove", wrap).forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const name = btn.dataset.name;
+        await apiPost("removePresenter", { projectId: myProject.projectId, presenterName: name });
+        toast(`${name} removed.`);
+        refreshData(false);
+      });
+    });
   }
 
   function renderProjectCard(myProject) {
@@ -272,6 +324,7 @@
       </div>
       <p class="hero-copy" style="margin:0;color:rgba(255,255,255,.78)">${escapeHtml(myProject.description)}</p>
       <div class="hero-points" style="margin-top:14px">
+        <div class="pill">${escapeHtml((myProject.presenters || [myProject.presenterName]).join(' & '))}</div>
         <div class="pill">${escapeHtml(formatDisplayDate(myProject.sessionDate))}</div>
         <div class="pill">Queue #${escapeHtml(myProject.queueOrder || "—")}</div>
       </div>
@@ -279,7 +332,7 @@
   }
 
   function renderVoteCard(meta, currentProject, currentVote) {
-    el("vote-presenter-name").textContent = currentProject ? currentProject.presenterName : "No presenter live";
+    el("vote-presenter-name").textContent = currentProject ? (currentProject.presenters || [currentProject.presenterName]).join(' & ') : "No presenter live";
     el("vote-project-title").textContent = currentProject ? currentProject.projectTitle : "Wait for the next announcement.";
     const wrap = el("star-row");
     const isOpen = Boolean(meta.votingOpen && currentProject);
@@ -293,11 +346,11 @@
     if (!currentProject) {
       el("vote-feedback").textContent = "No presenter is live right now.";
     } else if (!meta.votingOpen) {
-      el("vote-feedback").textContent = currentVote ? `You already voted ${currentVote.stars} star(s) for ${currentProject.presenterName}.` : "Voting is closed. Wait for the admin to open it.";
+      el("vote-feedback").textContent = currentVote ? `You already voted ${currentVote.stars} star(s) for ${(currentProject.presenters || [currentProject.presenterName]).join(' & ')}.` : "Voting is closed. Wait for the admin to open it.";
     } else if (currentVote) {
-      el("vote-feedback").textContent = `You already voted ${currentVote.stars} star(s) for ${currentProject.presenterName}.`;
+      el("vote-feedback").textContent = `You already voted ${currentVote.stars} star(s) for ${(currentProject.presenters || [currentProject.presenterName]).join(' & ')}.`;
     } else {
-      el("vote-feedback").textContent = `Vote now for ${currentProject.presenterName} — ${currentProject.projectTitle}.`;
+      el("vote-feedback").textContent = `Vote now for ${(currentProject.presenters || [currentProject.presenterName]).join(' & ')} — ${currentProject.projectTitle}.`;
     }
   }
 
@@ -434,7 +487,7 @@
     }
 
     const linkUrl = el("feed-link").value.trim();
-    const myProject = (state.data?.projects || []).find((p) => p.presenterName === state.user.name && p.sessionDate === state.data.sessionDate);
+    const myProject = (state.data?.projects || []).find((p) => p.sessionDate === state.data.sessionDate && (p.presenterName === state.user.name || (p.presenters || []).includes(state.user.name)));
     await apiPost("saveFeed", {
       authorName: state.user.name,
       authorProject: myProject?.projectTitle || "",
@@ -534,14 +587,14 @@
     let pick = eligible[0];
     const interval = setInterval(() => {
       pick = eligible[Math.floor(Math.random() * eligible.length)];
-      box.textContent = pick.presenterName;
+      box.textContent = (pick.presenters || [pick.presenterName]).join(' & ');
       sub.textContent = pick.projectTitle;
       count += 1;
       if (count >= steps) {
         clearInterval(interval);
         state.selectedProjectId = pick.projectId;
         burstConfetti(60);
-        toast(`${pick.presenterName} — ${pick.projectTitle}`);
+        toast(`${(pick.presenters || [pick.presenterName]).join(' & ')} — ${pick.projectTitle}`);
       }
     }, 70 + count * 2);
   }
@@ -567,15 +620,16 @@
       sessionDate: state.data.sessionDate
     });
     state.selectedProjectId = project.projectId;
-    toast(`${project.presenterName} is now on deck.`);
+    toast(`${(project.presenters || [project.presenterName]).join(' & ')} is now on deck.`);
     refreshData(false);
   }
 
   async function announceProject(projectId) {
     const project = (state.data?.activeProjects || []).find((p) => p.projectId === projectId) || (state.data?.projects || []).find((p) => p.projectId === projectId);
     if (!project) return;
-    const message = `${project.presenterName} is presenting ${project.projectTitle}.`;
-    el("wheel-result").textContent = project.presenterName;
+    const names = (project.presenters || [project.presenterName]).join(' & ');
+    const message = `${names} is presenting ${project.projectTitle}.`;
+    el("wheel-result").textContent = names;
     el("wheel-sub").textContent = project.projectTitle;
     if (state.user.isAdmin) {
       await apiPost("setAnnouncement", { lastAnnouncement: message, sessionDate: state.data.sessionDate });
@@ -596,7 +650,7 @@
       projectTitle: project.projectTitle,
       sessionDate: state.data.sessionDate
     });
-    toast(`Announced: ${project.presenterName} — ${project.projectTitle}`);
+    toast(`Announced: ${(project.presenters || [project.presenterName]).join(' & ')} — ${project.projectTitle}`);
     burstConfetti(35);
     refreshData(false);
   }
