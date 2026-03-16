@@ -517,9 +517,13 @@
   }
 
   async function spinWheel() {
-    const activeProjects = sortActiveProjects(state.data?.activeProjects || []);
-    if (!activeProjects.length) {
-      toast("No active presenters to spin.", true);
+    const allActive = sortActiveProjects(state.data?.activeProjects || []);
+    // Exclude projects that already got voted on today
+    const votedProjectIds = new Set((state.data?.votes || []).map((v) => v.projectId).filter(Boolean));
+    const eligible = allActive.filter((p) => !votedProjectIds.has(p.projectId));
+
+    if (!eligible.length) {
+      toast("All active projects have been voted on already.", true);
       return;
     }
 
@@ -527,9 +531,9 @@
     const sub = el("wheel-sub");
     const steps = 20 + Math.floor(Math.random() * 14);
     let count = 0;
-    let pick = activeProjects[0];
+    let pick = eligible[0];
     const interval = setInterval(() => {
-      pick = activeProjects[Math.floor(Math.random() * activeProjects.length)];
+      pick = eligible[Math.floor(Math.random() * eligible.length)];
       box.textContent = pick.presenterName;
       sub.textContent = pick.projectTitle;
       count += 1;
