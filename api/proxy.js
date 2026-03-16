@@ -251,6 +251,17 @@ async function vote(body) {
   const stars = Math.max(1, Math.min(5, Number(body.stars || 1)));
   const now = new Date().toISOString();
 
+  // Reject votes when voting is closed
+  const { data: votingMeta } = await supabase
+    .from('meta')
+    .select('value')
+    .eq('key', 'votingOpen')
+    .single();
+
+  if (!votingMeta || votingMeta.value !== 'true') {
+    throw new Error('Voting is closed. Stars cannot be changed after voting stops.');
+  }
+
   // Resolve project_id from the current presenter's active project
   const { data: project } = await supabase
     .from('projects')
