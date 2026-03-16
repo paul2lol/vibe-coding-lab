@@ -18,6 +18,7 @@
   function init() {
     hydrateLoginOptions();
     bindBaseEvents();
+    setupDoubleTapHearts();
     restoreUser();
   }
 
@@ -367,11 +368,16 @@
       const heartCount = post.heartCount || 0;
 
       const imageHtml = post.imageUrl
-        ? `<div class="feed-image"><img src="${escapeHtml(post.imageUrl)}" alt="Screenshot" loading="lazy" /></div>`
+        ? `<div class="feed-image" data-feed-id="${post.feedId}"><img src="${escapeHtml(post.imageUrl)}" alt="Screenshot" loading="lazy" /></div>`
         : "";
 
       const linkHtml = post.linkUrl
         ? `<div class="feed-link"><a href="${escapeHtml(post.linkUrl)}" target="_blank" rel="noopener">${escapeHtml(post.linkUrl)}</a></div>`
+        : "";
+
+      const heartedNames = (post.heartedBy || []);
+      const namesPreview = heartedNames.length
+        ? heartedNames.slice(0, 3).join(", ") + (heartedNames.length > 3 ? ` +${heartedNames.length - 3}` : "")
         : "";
 
       return `
@@ -387,9 +393,13 @@
           ${linkHtml}
           ${imageHtml}
           <div class="feed-actions">
-            <button class="btn btn-ghost btn-sm heart-btn ${iHearted ? "hearted" : ""}" type="button" data-action="heart" data-feed-id="${post.feedId}">
-              ${iHearted ? "❤️" : "🤍"} ${heartCount > 0 ? heartCount : ""}
-            </button>
+            <div class="heart-wrap ${heartCount > 0 ? "has-hearts" : ""}">
+              <button class="heart-btn ${iHearted ? "hearted" : ""}" type="button" data-action="heart" data-feed-id="${post.feedId}">
+                ${iHearted ? "❤️" : "🤍"}
+              </button>
+              <span class="heart-count">${heartCount > 0 ? heartCount : ""}</span>
+              ${namesPreview ? `<span class="heart-avatars">${escapeHtml(namesPreview)}</span>` : ""}
+            </div>
           </div>
           <div class="comment-list">
             ${postComments.map((comment) => `
@@ -412,6 +422,19 @@
 
     $$(".comment-form", wrap).forEach((form) => form.addEventListener("submit", onPostComment));
     $$("[data-action='heart']", wrap).forEach((btn) => btn.addEventListener("click", () => toggleHeart(btn.dataset.feedId)));
+
+    // Animate count bumps when hearts change
+    $$(".heart-count", wrap).forEach((el) => {
+      const val = el.textContent.trim();
+      const key = el.closest(".feed-item")?.querySelector("[data-feed-id]")?.dataset.feedId;
+      if (key && val && state._lastHearts && state._lastHearts[key] !== val) {
+        el.classList.add("bump");
+        setTimeout(() => el.classList.remove("bump"), 350);
+      }
+    });
+    // Track heart counts for next render
+    state._lastHearts = {};
+    feed.forEach((p) => { state._lastHearts[p.feedId] = String(p.heartCount || 0); });
   }
 
   function renderLeaderboard(rows) {
@@ -527,10 +550,51 @@
     });
   }
 
-  async function toggleHeart(feedId) {
+  async function toggleHeart(feedId, fromDblTap) {
     if (!state.user) return;
+
+    // Find the heart button for this post
+    const btn = document.querySelector(`[data-action="heart"][data-feed-id="${feedId}"]`);
+
+    // Optimistic UI: burst particles from button
+    if (btn) spawnHeartParticles(btn, fromDblTap ? 8 : 5);
+
     await apiPost("heartFeed", { feedId, userName: state.user.name });
     refreshData(false);
+  }
+
+  function spawnHeartParticles(anchor, count) {
+    const rect = anchor.getBoundingClientRect();
+    const hearts = ["❤️", "💖", "💗", "💕", "🩷"];
+    for (let i = 0; i < count; i++) {
+      const span = document.createElement("span");
+      span.className = "heart-particle";
+      span.textContent = hearts[Math.floor(Math.random() * hearts.length)];
+      const dx = (Math.random() - 0.5) * 80;
+      const dy = -(30 + Math.random() * 60);
+      const rot = (Math.random() - 0.5) * 60;
+      span.style.cssText = `position:fixed;left:${rect.left + rect.width / 2}px;top:${rect.top}px;--dx:${dx}px;--dy:${dy}px;--rot:${rot}deg;`;
+      document.body.appendChild(span);
+      span.addEventListener("animationend", () => span.remove());
+    }
+  }
+
+  function setupDoubleTapHearts() {
+    document.addEventListener("dblclick", (e) => {
+      const img = e.target.closest(".feed-image");
+      if (!img) return;
+      const feedId = img.dataset.feedId;
+      if (!feedId) return;
+
+      // Show big heart overlay
+      const overlay = document.createElement("span");
+      overlay.className = "dbl-heart-overlay";
+      overlay.textContent = "❤️";
+      img.appendChild(overlay);
+      overlay.addEventListener("animationend", () => overlay.remove());
+
+      toggleHeart(feedId, true);
+    });
   }
 
   async function onPostComment(event) {
