@@ -38,6 +38,7 @@
     el("project-form").addEventListener("submit", onSaveProject);
     el("clear-project-btn").addEventListener("click", clearProjectForm);
     el("feed-form").addEventListener("submit", onPostFeed);
+    el("feed-image").addEventListener("change", onFeedImageChange);
 
     el("spin-wheel-btn").addEventListener("click", spinWheel);
     el("shuffle-queue-btn").addEventListener("click", shuffleQueue);
@@ -309,6 +310,17 @@
 
     wrap.innerHTML = feed.map((post) => {
       const postComments = comments.filter((c) => c.feedId === post.feedId);
+      const iHearted = (post.heartedBy || []).includes(state.user?.name);
+      const heartCount = post.heartCount || 0;
+
+      const imageHtml = post.imageUrl
+        ? `<div class="feed-image"><img src="${escapeHtml(post.imageUrl)}" alt="Screenshot" loading="lazy" /></div>`
+        : "";
+
+      const linkHtml = post.linkUrl
+        ? `<div class="feed-link"><a href="${escapeHtml(post.linkUrl)}" target="_blank" rel="noopener">${escapeHtml(post.linkUrl)}</a></div>`
+        : "";
+
       return `
         <div class="feed-item">
           <div class="feed-header">
@@ -319,6 +331,13 @@
             <div class="chip chip-outline">${escapeHtml(post.sessionDate)}</div>
           </div>
           <div class="feed-text">${escapeHtml(post.message)}</div>
+          ${linkHtml}
+          ${imageHtml}
+          <div class="feed-actions">
+            <button class="btn btn-ghost btn-sm heart-btn ${iHearted ? "hearted" : ""}" type="button" data-action="heart" data-feed-id="${post.feedId}">
+              ${iHearted ? "❤️" : "🤍"} ${heartCount > 0 ? heartCount : ""}
+            </button>
+          </div>
           <div class="comment-list">
             ${postComments.map((comment) => `
               <div class="comment-item">
@@ -339,6 +358,7 @@
     }).join("");
 
     $$(".comment-form", wrap).forEach((form) => form.addEventListener("submit", onPostComment));
+    $$("[data-action='heart']", wrap).forEach((btn) => btn.addEventListener("click", () => toggleHeart(btn.dataset.feedId)));
   }
 
   function renderLeaderboard(rows) {
@@ -403,15 +423,60 @@
       toast("Write something before posting.", true);
       return;
     }
+
+    let imageUrl = "";
+    const fileInput = el("feed-image");
+    if (fileInput.files && fileInput.files[0]) {
+      toast("Uploading screenshot...");
+      const base64 = await fileToBase64(fileInput.files[0]);
+      const uploadRes = await apiPost("uploadFeedImage", { imageData: base64 });
+      imageUrl = uploadRes.imageUrl || "";
+    }
+
+    const linkUrl = el("feed-link").value.trim();
     const myProject = (state.data?.projects || []).find((p) => p.presenterName === state.user.name && p.sessionDate === state.data.sessionDate);
     await apiPost("saveFeed", {
       authorName: state.user.name,
       authorProject: myProject?.projectTitle || "",
       message,
+      imageUrl,
+      linkUrl,
       sessionDate: state.data.sessionDate
     });
     el("feed-message").value = "";
+    el("feed-link").value = "";
+    fileInput.value = "";
+    el("feed-image-preview").classList.add("hidden");
+    el("feed-image-preview").innerHTML = "";
     toast("Posted to the feed.");
+    refreshData(false);
+  }
+
+  function onFeedImageChange() {
+    const fileInput = el("feed-image");
+    const preview = el("feed-image-preview");
+    if (fileInput.files && fileInput.files[0]) {
+      const url = URL.createObjectURL(fileInput.files[0]);
+      preview.innerHTML = `<img src="${url}" alt="Preview" />`;
+      preview.classList.remove("hidden");
+    } else {
+      preview.innerHTML = "";
+      preview.classList.add("hidden");
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function toggleHeart(feedId) {
+    if (!state.user) return;
+    await apiPost("heartFeed", { feedId, userName: state.user.name });
     refreshData(false);
   }
 

@@ -333,6 +333,15 @@
                     <span class="field-label">Post an update</span>
                     <textarea id="feed-message" class="input textarea" maxlength="280" placeholder="Built the first version. Need help with the leaderboard animation."></textarea>
                   </label>
+                  <label class="field">
+                    <span class="field-label">Link (optional)</span>
+                    <input id="feed-link" class="input" type="url" placeholder="https://github.com/… or https://lovable.dev/…" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Screenshot (optional)</span>
+                    <input id="feed-image" type="file" accept="image/*" class="input" />
+                  </label>
+                  <div id="feed-image-preview" class="feed-image-preview hidden"></div>
                   <button class="btn btn-black" type="submit">Post to feed</button>
                 </form>
               </div>

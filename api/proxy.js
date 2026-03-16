@@ -33,6 +33,10 @@ module.exports = async function handler(req, res) {
           return res.json(await setAnnouncement(body));
         case 'updateMeta':
           return res.json(await updateMeta(body));
+        case 'uploadFeedImage':
+          return res.json(await uploadFeedImage(body));
+        case 'heartFeed':
+          return res.json(await heartFeed(body));
         default:
           return res.status(400).json({ ok: false, error: 'Unknown POST action.' });
       }
@@ -102,7 +106,7 @@ async function upsertMeta(entries) {
 async function bootstrap(viewer) {
   const sessionDate = await getSessionDate();
 
-  const [usersRes, projectsRes, votesRes, feedRes, commentsRes, metaRes, presenceRes, leaderboardRes, ppRes] = await Promise.all([
+  const [usersRes, projectsRes, votesRes, feedRes, commentsRes, metaRes, presenceRes, leaderboardRes, ppRes, heartsRes] = await Promise.all([
     supabase.from('users').select('*'),
     supabase.from('projects').select('*').eq('session_date', sessionDate),
     supabase.from('votes').select('*').eq('session_date', sessionDate),
@@ -112,6 +116,7 @@ async function bootstrap(viewer) {
     supabase.from('presence').select('*').eq('session_date', sessionDate).gte('last_seen_at', new Date(Date.now() - 2 * 60 * 1000).toISOString()),
     supabase.from('leaderboard').select('*').eq('session_date', sessionDate),
     supabase.from('project_presenters').select('*'),
+    supabase.from('feed_hearts').select('*'),
   ]);
 
   const meta = {};
@@ -130,6 +135,19 @@ async function bootstrap(viewer) {
   }));
   const activeProjects = projects.filter((p) => p.activeDemoDay === true);
 
+  // Build heart counts and per-user heart sets
+  const heartsByFeed = {};
+  (heartsRes.data || []).forEach((row) => {
+    if (!heartsByFeed[row.feed_id]) heartsByFeed[row.feed_id] = [];
+    heartsByFeed[row.feed_id].push(row.user_name);
+  });
+
+  const feed = rowsToCamel(feedRes.data).map((post) => ({
+    ...post,
+    heartCount: (heartsByFeed[post.feedId] || []).length,
+    heartedBy: heartsByFeed[post.feedId] || [],
+  }));
+
   return {
     ok: true,
     viewer: viewer || '',
@@ -138,7 +156,7 @@ async function bootstrap(viewer) {
     projects,
     activeProjects,
     votes: rowsToCamel(votesRes.data),
-    feed: rowsToCamel(feedRes.data),
+    feed,
     comments: rowsToCamel(commentsRes.data),
     meta,
     leaderboard: rowsToCamel(leaderboardRes.data),
@@ -228,9 +246,56 @@ async function saveFeed(body) {
     author_name: required(body.authorName, 'authorName is required.'),
     author_project: body.authorProject || '',
     message: required(body.message, 'message is required.'),
+    image_url: body.imageUrl || '',
+    link_url: body.linkUrl || '',
   });
   if (error) throw error;
   return { ok: true };
+}
+
+async function uploadFeedImage(body) {
+  const imageData = required(body.imageData, 'imageData is required.');
+  const fileName = `feed/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+
+  // Decode base64
+  const buffer = Buffer.from(imageData.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+
+  const { error } = await supabase.storage
+    .from('feed-images')
+    .upload(fileName, buffer, { contentType: 'image/png', upsert: false });
+  if (error) throw error;
+
+  const { data: urlData } = supabase.storage.from('feed-images').getPublicUrl(fileName);
+  return { ok: true, imageUrl: urlData.publicUrl };
+}
+
+async function heartFeed(body) {
+  const feedId = required(body.feedId, 'feedId is required.');
+  const userName = required(body.userName, 'userName is required.');
+
+  // Toggle: if already hearted, remove it; otherwise add it
+  const { data: existing } = await supabase
+    .from('feed_hearts')
+    .select('feed_id')
+    .eq('feed_id', feedId)
+    .eq('user_name', userName)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('feed_hearts')
+      .delete()
+      .eq('feed_id', feedId)
+      .eq('user_name', userName);
+    if (error) throw error;
+    return { ok: true, hearted: false };
+  } else {
+    const { error } = await supabase
+      .from('feed_hearts')
+      .insert({ feed_id: feedId, user_name: userName });
+    if (error) throw error;
+    return { ok: true, hearted: true };
+  }
 }
 
 async function saveComment(body) {

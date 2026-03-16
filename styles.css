@@ -676,6 +676,58 @@ h3 { font-size: clamp(20px, 2.2vw, 30px); }
   line-height: 1.6;
   font-size: 15px;
 }
+.feed-image {
+  margin-top: 12px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.feed-image img {
+  width: 100%;
+  max-height: 360px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(10,10,15,.1);
+}
+.feed-link {
+  margin-top: 8px;
+}
+.feed-link a {
+  color: #3d6aff;
+  font-size: 14px;
+  word-break: break-all;
+  text-decoration: none;
+}
+.feed-link a:hover {
+  text-decoration: underline;
+}
+.feed-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.heart-btn {
+  font-size: 14px;
+  cursor: pointer;
+  transition: transform .15s;
+}
+.heart-btn:hover {
+  transform: scale(1.15);
+}
+.heart-btn.hearted {
+  font-weight: 700;
+}
+.feed-image-preview {
+  margin-top: 8px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.feed-image-preview img {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(10,10,15,.12);
+}
 .comment-list {
   display: grid;
   gap: 10px;
