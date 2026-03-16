@@ -41,6 +41,8 @@ module.exports = async function handler(req, res) {
           return res.json(await addPresenter(body));
         case 'removePresenter':
           return res.json(await removePresenter(body));
+        case 'deleteProject':
+          return res.json(await deleteProject(body));
         default:
           return res.status(400).json({ ok: false, error: 'Unknown POST action.' });
       }
@@ -447,6 +449,30 @@ async function removePresenter(body) {
     .delete()
     .eq('project_id', projectId)
     .eq('presenter_name', presenterName);
+  if (error) throw error;
+  return { ok: true };
+}
+
+async function deleteProject(body) {
+  const projectId = required(body.projectId, 'projectId is required.');
+  const userName = required(body.userName, 'userName is required.');
+
+  // Verify the user is the creator or an admin
+  const { data: project } = await supabase
+    .from('projects')
+    .select('presenter_name')
+    .eq('project_id', projectId)
+    .single();
+
+  if (!project) throw new Error('Project not found.');
+  if (project.presenter_name !== userName && !body.isAdmin) {
+    throw new Error('Only the project creator or an admin can delete a project.');
+  }
+
+  // Delete project_presenters first (FK), then votes, then the project
+  await supabase.from('project_presenters').delete().eq('project_id', projectId);
+  await supabase.from('votes').delete().eq('project_id', projectId);
+  const { error } = await supabase.from('projects').delete().eq('project_id', projectId);
   if (error) throw error;
   return { ok: true };
 }

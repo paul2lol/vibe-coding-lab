@@ -159,7 +159,8 @@
     const activeProjects = sortActiveProjects(data.activeProjects || []);
     const currentProject = activeProjects.find((p) => p.projectId === meta.currentProjectId) || null;
     const currentVote = data.votes?.find((v) => v.presenterName === meta.currentPresenterName && v.voterName === state.user.name) || null;
-    const myProject = (data.projects || []).find((p) => p.sessionDate === data.sessionDate && (p.presenterName === state.user.name || (p.presenters || []).includes(state.user.name))) || null;
+    const myProjects = (data.projects || []).filter((p) => p.sessionDate === data.sessionDate && (p.presenterName === state.user.name || (p.presenters || []).includes(state.user.name)));
+    const myProject = myProjects[0] || null;
 
     el("session-chip").textContent = `Session ${formatDisplayDate(data.sessionDate)}`;
     el("online-chip").textContent = `${(data.onlineUsers || []).length} in arena`;
@@ -182,7 +183,7 @@
 
     renderCurrentPresenter(meta, currentProject, activeProjects);
     renderLineup(activeProjects, meta.currentProjectId);
-    renderProjectCard(myProject);
+    renderProjectCards(myProjects);
     renderFeed(data.feed || [], data.comments || []);
     renderLeaderboard(data.leaderboard || []);
     renderVoteCard(meta, currentProject, currentVote);
@@ -321,30 +322,50 @@
     });
   }
 
-  function renderProjectCard(myProject) {
+  function renderProjectCards(myProjects) {
     const wrap = el("my-project-card");
-    if (!myProject) {
+    if (!myProjects.length) {
       wrap.className = "empty-state compact";
       wrap.innerHTML = "No project submitted yet.";
       return;
     }
 
-    wrap.className = "brutal-card glass";
-    wrap.innerHTML = `
-      <div class="section-head tight">
-        <div>
-          <div class="eyebrow">${escapeHtml(myProject.category || "General")}</div>
-          <h3>${escapeHtml(myProject.projectTitle)}</h3>
+    wrap.className = "";
+    wrap.innerHTML = myProjects.map((p) => {
+      const isCreator = p.presenterName === state.user.name;
+      const canDelete = isCreator || state.user.isAdmin;
+      return `
+      <div class="brutal-card glass" style="margin-bottom:12px">
+        <div class="section-head tight">
+          <div>
+            <div class="eyebrow">${escapeHtml(p.category || "General")}</div>
+            <h3>${escapeHtml(p.projectTitle)}</h3>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <div class="chip ${String(p.activeDemoDay) === "true" ? "chip-lime" : "chip-outline"}">${String(p.activeDemoDay) === "true" ? "Active demo day" : "Draft only"}</div>
+            ${canDelete ? `<button class="btn btn-ghost btn-sm delete-project-btn" type="button" data-project-id="${p.projectId}" style="color:#ff573b;font-size:12px" title="Delete project">✕</button>` : ""}
+          </div>
         </div>
-        <div class="chip ${String(myProject.activeDemoDay) === "true" ? "chip-lime" : "chip-outline"}">${String(myProject.activeDemoDay) === "true" ? "Active demo day" : "Draft only"}</div>
-      </div>
-      <p class="hero-copy" style="margin:0;color:rgba(255,255,255,.78)">${escapeHtml(myProject.description)}</p>
-      <div class="hero-points" style="margin-top:14px">
-        <div class="pill">${escapeHtml((myProject.presenters || [myProject.presenterName]).join(' & '))}</div>
-        <div class="pill">${escapeHtml(formatDisplayDate(myProject.sessionDate))}</div>
-        <div class="pill">Queue #${escapeHtml(myProject.queueOrder || "—")}</div>
-      </div>
-    `;
+        <p class="hero-copy" style="margin:0;color:rgba(255,255,255,.78)">${escapeHtml(p.description)}</p>
+        <div class="hero-points" style="margin-top:14px">
+          <div class="pill">${escapeHtml((p.presenters || [p.presenterName]).join(' & '))}</div>
+          <div class="pill">${escapeHtml(formatDisplayDate(p.sessionDate))}</div>
+          <div class="pill">Queue #${escapeHtml(p.queueOrder || "—")}</div>
+        </div>
+      </div>`;
+    }).join("");
+
+    $$(".delete-project-btn", wrap).forEach((btn) => {
+      btn.addEventListener("click", () => deleteProject(btn.dataset.projectId));
+    });
+  }
+
+  async function deleteProject(projectId) {
+    if (!confirm("Delete this project? This cannot be undone.")) return;
+    await apiPost("deleteProject", { projectId, userName: state.user.name, isAdmin: state.user.isAdmin });
+    toast("Project deleted.");
+    clearProjectForm();
+    refreshData(false);
   }
 
   function renderVoteCard(meta, currentProject, currentVote) {
