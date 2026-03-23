@@ -355,10 +355,15 @@
             <div class="section-head">
               <div>
                 <div class="eyebrow">Scoreboard</div>
-                <h2>Live leaderboard for the day</h2>
+                <h2 id="leaderboard-title">Live leaderboard for the day</h2>
               </div>
-              <div class="chip chip-lime">Rolling average</div>
             </div>
+            <div class="lb-tabs" style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
+              <button class="chip chip-lime lb-tab active" data-lb-mode="session">This session</button>
+              <button class="chip chip-outline lb-tab" data-lb-mode="alltime">All-time</button>
+              <button class="chip chip-outline lb-tab" data-lb-mode="history">Past sessions</button>
+            </div>
+            <div id="lb-history-picker" style="display:none;margin-bottom:14px"></div>
             <div class="brutal-card paper">
               <div id="leaderboard-list" class="leaderboard-list"></div>
             </div>

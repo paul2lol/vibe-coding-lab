@@ -474,6 +474,11 @@
   }
 
   function renderLeaderboard(rows) {
+    renderLeaderboardRows(rows);
+    initLeaderboardTabs();
+  }
+
+  function renderLeaderboardRows(rows) {
     const wrap = el("leaderboard-list");
     if (!rows.length) {
       wrap.innerHTML = `<div class="empty-state">No votes yet. Once demo-day voting begins, the leaderboard will light up.</div>`;
@@ -487,7 +492,7 @@
             <div class="rank-badge">${index + 1}</div>
             <div>
               <div class="leader-name">${escapeHtml(row.presenterName)}</div>
-              <div class="leader-meta">${escapeHtml(row.votesCount)} votes • ${escapeHtml(row.projectTitle || "Project")}</div>
+              <div class="leader-meta">${escapeHtml(row.votesCount)} votes${row.sessionsCount ? ' • ' + row.sessionsCount + ' sessions' : ''} • ${escapeHtml(row.projectTitle || "Project")}</div>
             </div>
           </div>
           <div class="leader-score">${Number(row.avgStars || 0).toFixed(2)} ★</div>
@@ -495,6 +500,82 @@
         <div class="leader-project">${escapeHtml(row.projectTitle || "")}</div>
       </div>
     `).join("");
+  }
+
+  let lbTabsInitialized = false;
+  function initLeaderboardTabs() {
+    if (lbTabsInitialized) return;
+    lbTabsInitialized = true;
+
+    $$(".lb-tab").forEach((btn) => {
+      btn.addEventListener("click", () => loadLeaderboardMode(btn.dataset.lbMode));
+    });
+  }
+
+  async function loadLeaderboardMode(mode) {
+    // Update active tab styling
+    $$(".lb-tab").forEach((btn) => {
+      if (btn.dataset.lbMode === mode) {
+        btn.classList.add("active");
+        btn.classList.remove("chip-outline");
+        btn.classList.add("chip-lime");
+      } else {
+        btn.classList.remove("active");
+        btn.classList.remove("chip-lime");
+        btn.classList.add("chip-outline");
+      }
+    });
+
+    const titleEl = el("leaderboard-title");
+    const pickerEl = el("lb-history-picker");
+
+    if (mode === "session") {
+      titleEl.textContent = "Live leaderboard for the day";
+      pickerEl.style.display = "none";
+      renderLeaderboardRows(state.data?.leaderboard || []);
+      return;
+    }
+
+    if (mode === "alltime") {
+      titleEl.textContent = "All-time standings";
+      pickerEl.style.display = "none";
+      const res = await apiPost("getLeaderboard", { mode: "alltime" });
+      if (res.ok) renderLeaderboardRows(res.rows);
+      return;
+    }
+
+    if (mode === "history") {
+      titleEl.textContent = "Past sessions";
+      const res = await apiPost("getLeaderboard", { mode: "history" });
+      if (!res.ok) return;
+      if (!res.dates.length) {
+        pickerEl.style.display = "none";
+        el("leaderboard-list").innerHTML = `<div class="empty-state">No past sessions found.</div>`;
+        return;
+      }
+      pickerEl.style.display = "";
+      pickerEl.innerHTML = res.dates.map((d) => `<button class="chip chip-outline lb-date-btn" data-date="${d}">${formatDisplayDate(d)}</button>`).join(" ");
+      $$(".lb-date-btn", pickerEl).forEach((btn) => {
+        btn.addEventListener("click", () => loadSessionLeaderboard(btn.dataset.date));
+      });
+      // Auto-load the most recent past session
+      loadSessionLeaderboard(res.dates[0]);
+    }
+  }
+
+  async function loadSessionLeaderboard(sessionDate) {
+    $$(".lb-date-btn").forEach((btn) => {
+      if (btn.dataset.date === sessionDate) {
+        btn.classList.remove("chip-outline");
+        btn.classList.add("chip-lime");
+      } else {
+        btn.classList.remove("chip-lime");
+        btn.classList.add("chip-outline");
+      }
+    });
+    el("leaderboard-title").textContent = `Session ${formatDisplayDate(sessionDate)}`;
+    const res = await apiPost("getLeaderboard", { mode: "session", sessionDate });
+    if (res.ok) renderLeaderboardRows(res.rows);
   }
 
   async function onSaveProject(event) {

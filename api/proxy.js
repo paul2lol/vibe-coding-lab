@@ -43,6 +43,8 @@ module.exports = async function handler(req, res) {
           return res.json(await removePresenter(body));
         case 'deleteProject':
           return res.json(await deleteProject(body));
+        case 'getLeaderboard':
+          return res.json(await getLeaderboard(body));
         default:
           return res.status(400).json({ ok: false, error: 'Unknown POST action.' });
       }
@@ -484,4 +486,47 @@ async function deleteProject(body) {
   const { error } = await supabase.from('projects').delete().eq('project_id', projectId);
   if (error) throw error;
   return { ok: true };
+}
+
+async function getLeaderboard(body) {
+  const mode = body.mode || 'session'; // 'session' | 'alltime' | 'history'
+
+  if (mode === 'alltime') {
+    // Aggregate across all sessions
+    const { data, error } = await supabase.from('leaderboard').select('*');
+    if (error) throw error;
+    // Group by presenter and aggregate
+    const byPresenter = {};
+    (data || []).forEach((row) => {
+      const key = row.presenter_name;
+      if (!byPresenter[key]) byPresenter[key] = { presenterName: key, totalStars: 0, totalVotes: 0, sessions: 0, projects: new Set() };
+      byPresenter[key].totalStars += Number(row.avg_stars) * Number(row.votes_count);
+      byPresenter[key].totalVotes += Number(row.votes_count);
+      byPresenter[key].sessions += 1;
+      byPresenter[key].projects.add(row.project_title);
+    });
+    const rows = Object.values(byPresenter).map((p) => ({
+      presenterName: p.presenterName,
+      avgStars: p.totalVotes > 0 ? (p.totalStars / p.totalVotes).toFixed(2) : '0.00',
+      votesCount: p.totalVotes,
+      sessionsCount: p.sessions,
+      projectTitle: [...p.projects].join(', '),
+    }));
+    rows.sort((a, b) => Number(b.avgStars) - Number(a.avgStars) || b.votesCount - a.votesCount);
+    return { ok: true, mode, rows };
+  }
+
+  if (mode === 'history') {
+    // Return all distinct session dates that have votes
+    const { data, error } = await supabase.from('leaderboard').select('session_date');
+    if (error) throw error;
+    const dates = [...new Set((data || []).map((r) => r.session_date))].sort().reverse();
+    return { ok: true, mode, dates };
+  }
+
+  // Default: specific session
+  const sessionDate = body.sessionDate || await getSessionDate();
+  const { data, error } = await supabase.from('leaderboard').select('*').eq('session_date', sessionDate);
+  if (error) throw error;
+  return { ok: true, mode, sessionDate, rows: rowsToCamel(data) };
 }
