@@ -9,7 +9,6 @@
     user: null,
     data: null,
     pollTimer: null,
-    heartbeatTimer: null,
     countdownTimer: null,
     selectedProjectId: null,
     toastTimer: null,
@@ -100,14 +99,10 @@
 
     el("project-session-date").value = toDateInput(getDefaultSessionDate());
 
-    sendHeartbeat();
     refreshData(true);
 
     clearInterval(state.pollTimer);
     state.pollTimer = setInterval(() => refreshData(false), cfg.pollMs);
-
-    clearInterval(state.heartbeatTimer);
-    state.heartbeatTimer = setInterval(sendHeartbeat, cfg.heartbeatMs);
   }
 
   function logout() {
@@ -115,7 +110,6 @@
     state.user = null;
     state.data = null;
     clearInterval(state.pollTimer);
-    clearInterval(state.heartbeatTimer);
     clearInterval(state.countdownTimer);
     window.location.reload();
   }
@@ -128,7 +122,7 @@
   async function refreshData(showToastMsg = false) {
     if (!state.user) return;
     try {
-      const data = await apiGet("bootstrap", { viewer: state.user.name });
+      const data = await apiGet("bootstrap", { viewer: state.user.name, role: state.user.role });
       // Normalize meta string booleans/numbers once on receive
       const m = data.meta || {};
       m.votingOpen = m.votingOpen === 'true' || m.votingOpen === true;
@@ -140,15 +134,6 @@
     } catch (err) {
       console.error(err);
       toast("Could not refresh live data.", true);
-    }
-  }
-
-  async function sendHeartbeat() {
-    if (!state.user) return;
-    try {
-      await apiPost("heartbeat", { userName: state.user.name, role: state.user.role });
-    } catch (err) {
-      console.warn("heartbeat failed", err);
     }
   }
 
@@ -742,6 +727,7 @@
     await apiPost("vote", {
       sessionDate: state.data.sessionDate,
       presenterName: meta.currentPresenterName,
+      projectId: meta.currentProjectId,
       voterName: state.user.name,
       stars
     });

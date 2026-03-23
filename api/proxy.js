@@ -1,11 +1,6 @@
 const supabase = require('./_supabase');
 const { rowsToCamel, rowToCamel } = require('./_mappers');
 
-// In-memory cache for session date (avoids hitting meta table on every request)
-let cachedSessionDate = null;
-let cachedAt = 0;
-const SESSION_CACHE_MS = 60 * 1000; // 1 minute
-
 module.exports = async function handler(req, res) {
   try {
     const action = req.query.action || (req.body && req.body.action) || '';
@@ -13,15 +8,13 @@ module.exports = async function handler(req, res) {
 
     if (req.method === 'GET') {
       if (action === 'bootstrap') {
-        return res.json(await bootstrap(req.query.viewer || ''));
+        return res.json(await bootstrap(req.query.viewer || '', req.query.role || ''));
       }
       return res.status(400).json({ ok: false, error: 'Unknown GET action.' });
     }
 
     if (req.method === 'POST') {
       switch (action) {
-        case 'heartbeat':
-          return res.json(await heartbeat(body));
         case 'saveProject':
           return res.json(await saveProject(body));
         case 'saveFeed':
@@ -76,7 +69,6 @@ function required(value, msg) {
 }
 
 function nowIST() {
-  // Vercel runs UTC; convert to IST (UTC+5:30) for date logic
   const now = new Date();
   const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
   return ist;
@@ -99,32 +91,6 @@ function formatDate(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-async function getSessionDate() {
-  // Return cached value if fresh (avoids DB hit on every request)
-  if (cachedSessionDate && (Date.now() - cachedAt) < SESSION_CACHE_MS) {
-    return cachedSessionDate;
-  }
-
-  const { data } = await supabase
-    .from('meta')
-    .select('value')
-    .eq('key', 'sessionDate')
-    .single();
-
-  const stored = data?.value;
-  if (stored && stored.trim() !== '') {
-    cachedSessionDate = stored;
-    cachedAt = Date.now();
-    return stored;
-  }
-
-  const defaultDate = getDefaultSessionDate();
-  await upsertMeta({ sessionDate: defaultDate });
-  cachedSessionDate = defaultDate;
-  cachedAt = Date.now();
-  return defaultDate;
-}
-
 async function upsertMeta(entries) {
   const now = new Date().toISOString();
   const rows = Object.entries(entries).map(([key, value]) => ({
@@ -134,26 +100,34 @@ async function upsertMeta(entries) {
   }));
   const { error } = await supabase.from('meta').upsert(rows, { onConflict: 'key' });
   if (error) throw error;
-  // Invalidate session date cache if it was updated
-  if ('sessionDate' in entries) {
-    cachedSessionDate = entries.sessionDate;
-    cachedAt = Date.now();
-  }
 }
 
 // --- Action handlers ---
 
-async function bootstrap(viewer) {
-  // Fetch meta first (single query) — extracts session date + all meta in one shot
+// Bootstrap is the ONLY action that reads from the meta table.
+// All other actions receive sessionDate from the client (set during bootstrap).
+// This eliminates the getSessionDate() query that was hitting meta on every request.
+// Bootstrap also handles presence (heartbeat) inline — no separate heartbeat endpoint.
+async function bootstrap(viewer, role) {
+  // 1. Single meta query — the ONLY meta read in the entire app
   const metaRes = await supabase.from('meta').select('*');
   const meta = {};
   (metaRes.data || []).forEach((row) => { meta[row.key] = row.value; });
 
   const sessionDate = meta.sessionDate || getDefaultSessionDate();
-  cachedSessionDate = sessionDate;
-  cachedAt = Date.now();
 
-  // Single batch: 7 queries (down from 10)
+  // 2. Upsert presence inline (replaces separate heartbeat endpoint)
+  // This is a fire-and-forget write — don't await it before returning data
+  const presencePromise = viewer
+    ? supabase.from('presence').upsert({
+        name: viewer,
+        role: role || '',
+        session_date: sessionDate,
+        last_seen_at: new Date().toISOString(),
+      }, { onConflict: 'name,session_date' }).then(() => {})
+    : Promise.resolve();
+
+  // 3. All data queries in a single parallel batch (7 queries)
   const [usersRes, projectsRes, ppRes, votesRes, feedRes, presenceRes, leaderboardRes] = await Promise.all([
     supabase.from('users').select('*'),
     supabase.from('projects').select('*').eq('session_date', sessionDate),
@@ -164,7 +138,7 @@ async function bootstrap(viewer) {
     supabase.from('leaderboard').select('*').eq('session_date', sessionDate),
   ]);
 
-  // Fetch comments + hearts only if there's feed data (conditional queries)
+  // 4. Conditional: comments + hearts only if feed exists (saves 2 queries when feed is empty)
   let commentsRes = { data: [] };
   let heartsRes = { data: [] };
   if (feedRes.data && feedRes.data.length > 0) {
@@ -174,7 +148,10 @@ async function bootstrap(viewer) {
     ]);
   }
 
-  // Build a map of project_id -> all presenter names
+  // Wait for presence write to complete (non-blocking above)
+  await presencePromise;
+
+  // Build presenter map
   const presentersByProject = {};
   (ppRes.data || []).forEach((row) => {
     if (!presentersByProject[row.project_id]) presentersByProject[row.project_id] = [];
@@ -187,7 +164,7 @@ async function bootstrap(viewer) {
   }));
   const activeProjects = projects.filter((p) => p.activeDemoDay === true);
 
-  // Build heart counts and per-user heart sets
+  // Build heart map
   const heartsByFeed = {};
   (heartsRes.data || []).forEach((row) => {
     if (!heartsByFeed[row.feed_id]) heartsByFeed[row.feed_id] = [];
@@ -216,25 +193,11 @@ async function bootstrap(viewer) {
   };
 }
 
-async function heartbeat(body) {
-  const name = required(body.userName, 'userName is required.');
-  const sessionDate = await getSessionDate();
-  const { error } = await supabase.from('presence').upsert({
-    name,
-    role: body.role || '',
-    session_date: sessionDate,
-    last_seen_at: new Date().toISOString(),
-  }, { onConflict: 'name,session_date' });
-  if (error) throw error;
-  return { ok: true };
-}
-
 async function saveProject(body) {
   const presenterName = required(body.presenterName, 'presenterName is required.');
   const sessionDate = required(body.sessionDate, 'sessionDate is required.');
   const now = new Date().toISOString();
 
-  // Check if project exists by projectId (allows multiple projects per person)
   let existing = null;
   if (body.projectId) {
     const { data } = await supabase
@@ -266,7 +229,6 @@ async function saveProject(body) {
       .eq('project_id', projectId);
     if (error) throw error;
   } else {
-    // Get next queue order
     const { data: maxRow } = await supabase
       .from('projects')
       .select('queue_order')
@@ -283,7 +245,6 @@ async function saveProject(body) {
     projectId = inserted.project_id;
   }
 
-  // Auto-add creator to project_presenters
   await supabase.from('project_presenters').upsert({
     project_id: projectId,
     presenter_name: presenterName,
@@ -309,7 +270,6 @@ async function uploadFeedImage(body) {
   const imageData = required(body.imageData, 'imageData is required.');
   const fileName = `feed/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
 
-  // Decode base64
   const buffer = Buffer.from(imageData.replace(/^data:image\/\w+;base64,/, ''), 'base64');
 
   const { error } = await supabase.storage
@@ -325,7 +285,6 @@ async function heartFeed(body) {
   const feedId = required(body.feedId, 'feedId is required.');
   const userName = required(body.userName, 'userName is required.');
 
-  // Toggle: if already hearted, remove it; otherwise add it
   const { data: existing } = await supabase
     .from('feed_hearts')
     .select('feed_id')
@@ -365,10 +324,11 @@ async function vote(body) {
   const sessionDate = required(body.sessionDate, 'sessionDate is required.');
   const presenterName = required(body.presenterName, 'presenterName is required.');
   const voterName = required(body.voterName, 'voterName is required.');
+  const projectId = required(body.projectId, 'projectId is required.');
   const stars = Math.max(1, Math.min(5, Number(body.stars || 1)));
   const now = new Date().toISOString();
 
-  // Reject votes when voting is closed
+  // Server-side voting gate — single meta read (only when someone votes, not every poll)
   const { data: votingMeta } = await supabase
     .from('meta')
     .select('value')
@@ -379,19 +339,7 @@ async function vote(body) {
     throw new Error('Voting is closed. Stars cannot be changed after voting stops.');
   }
 
-  // Resolve project_id from the current presenter's active project
-  const { data: project } = await supabase
-    .from('projects')
-    .select('project_id')
-    .eq('session_date', sessionDate)
-    .eq('presenter_name', presenterName)
-    .eq('active_demo_day', true)
-    .limit(1)
-    .maybeSingle();
-
-  const projectId = project?.project_id || null;
-
-  // Check: same person cannot vote twice for the same project
+  // Check: same person cannot vote twice for the same project on the same day
   const { data: existing } = await supabase
     .from('votes')
     .select('vote_id')
@@ -401,7 +349,6 @@ async function vote(body) {
     .maybeSingle();
 
   if (existing) {
-    // Update existing vote (allow changing stars)
     const { error } = await supabase
       .from('votes')
       .update({ stars, updated_at: now })
@@ -479,7 +426,6 @@ async function removePresenter(body) {
   const projectId = required(body.projectId, 'projectId is required.');
   const presenterName = required(body.presenterName, 'presenterName is required.');
 
-  // Don't allow removing the original creator
   const { data: project } = await supabase
     .from('projects')
     .select('presenter_name')
@@ -503,7 +449,6 @@ async function deleteProject(body) {
   const projectId = required(body.projectId, 'projectId is required.');
   const userName = required(body.userName, 'userName is required.');
 
-  // Verify the user is the creator or an admin
   const { data: project } = await supabase
     .from('projects')
     .select('presenter_name')
@@ -515,7 +460,6 @@ async function deleteProject(body) {
     throw new Error('Only the project creator or an admin can delete a project.');
   }
 
-  // Delete project_presenters first (FK), then votes, then the project
   await supabase.from('project_presenters').delete().eq('project_id', projectId);
   await supabase.from('votes').delete().eq('project_id', projectId);
   const { error } = await supabase.from('projects').delete().eq('project_id', projectId);
@@ -524,13 +468,11 @@ async function deleteProject(body) {
 }
 
 async function getLeaderboard(body) {
-  const mode = body.mode || 'session'; // 'session' | 'alltime' | 'history'
+  const mode = body.mode || 'session';
 
   if (mode === 'alltime') {
-    // Aggregate across all sessions
     const { data, error } = await supabase.from('leaderboard').select('*');
     if (error) throw error;
-    // Group by presenter and aggregate
     const byPresenter = {};
     (data || []).forEach((row) => {
       const key = row.presenter_name;
@@ -552,15 +494,14 @@ async function getLeaderboard(body) {
   }
 
   if (mode === 'history') {
-    // Return all distinct session dates that have votes
     const { data, error } = await supabase.from('leaderboard').select('session_date');
     if (error) throw error;
     const dates = [...new Set((data || []).map((r) => r.session_date))].sort().reverse();
     return { ok: true, mode, dates };
   }
 
-  // Default: specific session
-  const sessionDate = body.sessionDate || await getSessionDate();
+  // Default: specific session — sessionDate comes from client, no meta query needed
+  const sessionDate = required(body.sessionDate, 'sessionDate is required.');
   const { data, error } = await supabase.from('leaderboard').select('*').eq('session_date', sessionDate);
   if (error) throw error;
   return { ok: true, mode, sessionDate, rows: rowsToCamel(data) };
@@ -576,17 +517,11 @@ async function migrateSession(body) {
   const fromDate = required(body.fromDate, 'fromDate is required.');
   const toDate = required(body.toDate, 'toDate is required.');
 
-  // Move projects
   await supabase.from('projects').update({ session_date: toDate }).eq('session_date', fromDate);
-  // Move votes
   await supabase.from('votes').update({ session_date: toDate }).eq('session_date', fromDate);
-  // Move feed
   await supabase.from('feed').update({ session_date: toDate }).eq('session_date', fromDate);
-  // Move comments
   await supabase.from('comments').update({ session_date: toDate }).eq('session_date', fromDate);
-  // Move presence
   await supabase.from('presence').update({ session_date: toDate }).eq('session_date', fromDate);
-  // Update meta session date
   await upsertMeta({ sessionDate: toDate });
 
   return { ok: true, fromDate, toDate };
