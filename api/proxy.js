@@ -66,20 +66,27 @@ function required(value, msg) {
   return String(value).trim();
 }
 
-function getDefaultSessionDate() {
+function nowIST() {
+  // Vercel runs UTC; convert to IST (UTC+5:30) for date logic
   const now = new Date();
-  const day = now.getDay();
+  const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  return ist;
+}
+
+function getDefaultSessionDate() {
+  const now = nowIST();
+  const day = now.getUTCDay();
   if (day === 1) return formatDate(now);
   const daysUntilMonday = day === 0 ? 1 : 8 - day;
   const target = new Date(now);
-  target.setDate(now.getDate() + daysUntilMonday);
+  target.setUTCDate(now.getUTCDate() + daysUntilMonday);
   return formatDate(target);
 }
 
 function formatDate(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -93,7 +100,7 @@ async function getSessionDate() {
   const stored = data?.value;
   if (stored && stored.trim() !== '') {
     // Auto-advance if the stored date is in the past
-    const today = formatDate(new Date());
+    const today = formatDate(nowIST());
     if (stored < today) {
       const newDate = getDefaultSessionDate();
       await upsertMeta({ sessionDate: newDate, votingOpen: 'false', currentPresenterName: '', currentProjectId: '', announcement: '' });
