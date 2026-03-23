@@ -12,6 +12,10 @@
     countdownTimer: null,
     selectedProjectId: null,
     toastTimer: null,
+    pollFailures: 0,        // exponential backoff counter
+    lastPollTime: 0,         // prevent overlapping polls
+    isPollInFlight: false,   // prevent concurrent requests
+    isTabVisible: true,      // page visibility tracking
   };
 
   function init() {
@@ -100,9 +104,26 @@
     el("project-session-date").value = toDateInput(getDefaultSessionDate());
 
     refreshData(true);
+    startSmartPolling();
 
+    // Stop polling when tab is hidden, resume when visible
+    document.addEventListener("visibilitychange", () => {
+      state.isTabVisible = !document.hidden;
+      if (state.isTabVisible && state.user) {
+        refreshData(false); // catch up once on return
+      }
+    });
+  }
+
+  function startSmartPolling() {
     clearInterval(state.pollTimer);
-    state.pollTimer = setInterval(() => refreshData(false), cfg.pollMs);
+    // Add jitter (0-5s) so multiple users don't sync their polls
+    const jitter = Math.floor(Math.random() * 5000);
+    setTimeout(() => {
+      state.pollTimer = setInterval(() => {
+        if (state.isTabVisible) refreshData(false);
+      }, cfg.pollMs);
+    }, jitter);
   }
 
   function logout() {
@@ -121,6 +142,17 @@
 
   async function refreshData(showToastMsg = false) {
     if (!state.user) return;
+
+    // Prevent concurrent requests (don't stack polls)
+    if (state.isPollInFlight && !showToastMsg) return;
+
+    // Minimum 5s between polls (prevents rapid-fire after actions)
+    const now = Date.now();
+    if (!showToastMsg && now - state.lastPollTime < 5000) return;
+
+    state.isPollInFlight = true;
+    state.lastPollTime = now;
+
     try {
       const data = await apiGet("bootstrap", { viewer: state.user.name, role: state.user.role });
       // Normalize meta string booleans/numbers once on receive
@@ -129,11 +161,21 @@
       if (m.votingEndsAt) m.votingEndsAt = Number(m.votingEndsAt) || new Date(m.votingEndsAt).getTime() || 0;
       if (m.demoEndsAt) m.demoEndsAt = Number(m.demoEndsAt) || new Date(m.demoEndsAt).getTime() || 0;
       state.data = data;
+      state.pollFailures = 0; // reset backoff on success
       renderAll();
       if (showToastMsg) toast("Arena refreshed.");
     } catch (err) {
       console.error(err);
-      toast("Could not refresh live data.", true);
+      state.pollFailures++;
+      // Exponential backoff: after N failures, skip next N polls (caps at 6 = ~3 min gap)
+      if (state.pollFailures > 1) {
+        const skipMs = Math.min(state.pollFailures * cfg.pollMs, 180000);
+        state.lastPollTime = Date.now() + skipMs - cfg.pollMs; // push next poll out
+        console.warn(`Poll backoff: next attempt in ${Math.round(skipMs / 1000)}s (failure #${state.pollFailures})`);
+      }
+      if (showToastMsg) toast("Could not refresh live data.", true);
+    } finally {
+      state.isPollInFlight = false;
     }
   }
 

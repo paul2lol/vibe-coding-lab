@@ -104,61 +104,41 @@ async function upsertMeta(entries) {
 
 // --- Action handlers ---
 
-// Bootstrap is the ONLY action that reads from the meta table.
-// All other actions receive sessionDate from the client (set during bootstrap).
-// This eliminates the getSessionDate() query that was hitting meta on every request.
-// Bootstrap also handles presence (heartbeat) inline — no separate heartbeat endpoint.
+// Bootstrap uses a SINGLE Postgres RPC call (bootstrap_data) that returns all data
+// in one database connection instead of 8 separate queries.
+// This is the critical optimization — PostgREST pool has ~10 connections,
+// and 8 queries per poll from 15 users was exhausting it instantly.
 async function bootstrap(viewer, role) {
-  // 1. Single meta query — the ONLY meta read in the entire app
-  const metaRes = await supabase.from('meta').select('*');
-  const meta = {};
-  (metaRes.data || []).forEach((row) => { meta[row.key] = row.value; });
+  // Get session date from meta — but we do it inside the RPC now.
+  // We still need it as a parameter, so do a lightweight single read.
+  const { data: metaRow } = await supabase
+    .from('meta')
+    .select('value')
+    .eq('key', 'sessionDate')
+    .maybeSingle();
 
-  const sessionDate = meta.sessionDate || getDefaultSessionDate();
+  const sessionDate = (metaRow && metaRow.value) || getDefaultSessionDate();
 
-  // 2. Upsert presence inline (replaces separate heartbeat endpoint)
-  // This is a fire-and-forget write — don't await it before returning data
-  const presencePromise = viewer
-    ? supabase.from('presence').upsert({
-        name: viewer,
-        role: role || '',
-        session_date: sessionDate,
-        last_seen_at: new Date().toISOString(),
-      }, { onConflict: 'name,session_date' }).then(() => {})
-    : Promise.resolve();
+  // SINGLE RPC call — 1 database connection for ALL data + presence upsert
+  const { data: rpcResult, error } = await supabase.rpc('bootstrap_data', {
+    p_session_date: sessionDate,
+    p_viewer: viewer || '',
+    p_role: role || '',
+  });
 
-  // 3. All data queries in a single parallel batch (7 queries)
-  const [usersRes, projectsRes, ppRes, votesRes, feedRes, presenceRes, leaderboardRes] = await Promise.all([
-    supabase.from('users').select('*'),
-    supabase.from('projects').select('*').eq('session_date', sessionDate),
-    supabase.from('project_presenters').select('*'),
-    supabase.from('votes').select('*').eq('session_date', sessionDate),
-    supabase.from('feed').select('*').eq('session_date', sessionDate).order('created_at', { ascending: false }).limit(50),
-    supabase.from('presence').select('*').eq('session_date', sessionDate).gte('last_seen_at', new Date(Date.now() - 2 * 60 * 1000).toISOString()),
-    supabase.from('leaderboard').select('*').eq('session_date', sessionDate),
-  ]);
+  if (error) throw error;
 
-  // 4. Conditional: comments + hearts only if feed exists (saves 2 queries when feed is empty)
-  let commentsRes = { data: [] };
-  let heartsRes = { data: [] };
-  if (feedRes.data && feedRes.data.length > 0) {
-    [commentsRes, heartsRes] = await Promise.all([
-      supabase.from('comments').select('*').eq('session_date', sessionDate).order('created_at', { ascending: true }),
-      supabase.from('feed_hearts').select('*'),
-    ]);
-  }
-
-  // Wait for presence write to complete (non-blocking above)
-  await presencePromise;
+  const d = rpcResult || {};
+  const meta = d.meta || {};
 
   // Build presenter map
   const presentersByProject = {};
-  (ppRes.data || []).forEach((row) => {
+  (d.project_presenters || []).forEach((row) => {
     if (!presentersByProject[row.project_id]) presentersByProject[row.project_id] = [];
     presentersByProject[row.project_id].push(row.presenter_name);
   });
 
-  const projects = rowsToCamel(projectsRes.data).map((p) => ({
+  const projects = rowsToCamel(d.projects || []).map((p) => ({
     ...p,
     presenters: presentersByProject[p.projectId] || [p.presenterName],
   }));
@@ -166,12 +146,12 @@ async function bootstrap(viewer, role) {
 
   // Build heart map
   const heartsByFeed = {};
-  (heartsRes.data || []).forEach((row) => {
+  (d.feed_hearts || []).forEach((row) => {
     if (!heartsByFeed[row.feed_id]) heartsByFeed[row.feed_id] = [];
     heartsByFeed[row.feed_id].push(row.user_name);
   });
 
-  const feed = rowsToCamel(feedRes.data).map((post) => ({
+  const feed = rowsToCamel(d.feed || []).map((post) => ({
     ...post,
     heartCount: (heartsByFeed[post.feedId] || []).length,
     heartedBy: heartsByFeed[post.feedId] || [],
@@ -181,15 +161,15 @@ async function bootstrap(viewer, role) {
     ok: true,
     viewer: viewer || '',
     sessionDate,
-    team: rowsToCamel(usersRes.data),
+    team: rowsToCamel(d.users || []),
     projects,
     activeProjects,
-    votes: rowsToCamel(votesRes.data),
+    votes: rowsToCamel(d.votes || []),
     feed,
-    comments: rowsToCamel(commentsRes.data),
+    comments: rowsToCamel(d.comments || []),
     meta,
-    leaderboard: rowsToCamel(leaderboardRes.data),
-    onlineUsers: rowsToCamel(presenceRes.data),
+    leaderboard: rowsToCamel(d.leaderboard || []),
+    onlineUsers: rowsToCamel(d.presence || []),
   };
 }
 
