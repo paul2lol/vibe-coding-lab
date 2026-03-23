@@ -127,17 +127,22 @@ async function upsertMeta(entries) {
 async function bootstrap(viewer) {
   const sessionDate = await getSessionDate();
 
-  const [usersRes, projectsRes, votesRes, feedRes, commentsRes, metaRes, presenceRes, leaderboardRes, ppRes, heartsRes] = await Promise.all([
+  // Batch 1: core data (5 queries)
+  const [usersRes, projectsRes, metaRes, ppRes, heartsRes] = await Promise.all([
     supabase.from('users').select('*'),
     supabase.from('projects').select('*').eq('session_date', sessionDate),
+    supabase.from('meta').select('*'),
+    supabase.from('project_presenters').select('*'),
+    supabase.from('feed_hearts').select('*'),
+  ]);
+
+  // Batch 2: session-scoped data (5 queries)
+  const [votesRes, feedRes, commentsRes, presenceRes, leaderboardRes] = await Promise.all([
     supabase.from('votes').select('*').eq('session_date', sessionDate),
     supabase.from('feed').select('*').eq('session_date', sessionDate).order('created_at', { ascending: false }),
     supabase.from('comments').select('*').eq('session_date', sessionDate).order('created_at', { ascending: true }),
-    supabase.from('meta').select('*'),
     supabase.from('presence').select('*').eq('session_date', sessionDate).gte('last_seen_at', new Date(Date.now() - 2 * 60 * 1000).toISOString()),
     supabase.from('leaderboard').select('*').eq('session_date', sessionDate),
-    supabase.from('project_presenters').select('*'),
-    supabase.from('feed_hearts').select('*'),
   ]);
 
   const meta = {};
