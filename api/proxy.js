@@ -89,7 +89,16 @@ async function getSessionDate() {
     .single();
 
   const stored = data?.value;
-  if (stored && stored.trim() !== '') return stored;
+  if (stored && stored.trim() !== '') {
+    // Auto-advance if the stored date is in the past
+    const today = formatDate(new Date());
+    if (stored < today) {
+      const newDate = getDefaultSessionDate();
+      await upsertMeta({ sessionDate: newDate, votingOpen: 'false', currentPresenterName: '', currentProjectId: '', announcement: '' });
+      return newDate;
+    }
+    return stored;
+  }
 
   const defaultDate = getDefaultSessionDate();
   await upsertMeta({ sessionDate: defaultDate });
