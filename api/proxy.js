@@ -43,6 +43,10 @@ module.exports = async function handler(req, res) {
           return res.json(await removePresenter(body));
         case 'deleteProject':
           return res.json(await deleteProject(body));
+        case 'newSession':
+          return res.json(await newSession(body));
+        case 'migrateSession':
+          return res.json(await migrateSession(body));
         case 'getLeaderboard':
           return res.json(await getLeaderboard(body));
         default:
@@ -99,13 +103,6 @@ async function getSessionDate() {
 
   const stored = data?.value;
   if (stored && stored.trim() !== '') {
-    // Auto-advance if the stored date is in the past
-    const today = formatDate(nowIST());
-    if (stored < today) {
-      const newDate = getDefaultSessionDate();
-      await upsertMeta({ sessionDate: newDate, votingOpen: 'false', currentPresenterName: '', currentProjectId: '', announcement: '' });
-      return newDate;
-    }
     return stored;
   }
 
@@ -536,4 +533,30 @@ async function getLeaderboard(body) {
   const { data, error } = await supabase.from('leaderboard').select('*').eq('session_date', sessionDate);
   if (error) throw error;
   return { ok: true, mode, sessionDate, rows: rowsToCamel(data) };
+}
+
+async function newSession(body) {
+  const newDate = body.sessionDate || formatDate(nowIST());
+  await upsertMeta({ sessionDate: newDate, votingOpen: 'false', currentPresenterName: '', currentProjectId: '', announcement: '' });
+  return { ok: true, sessionDate: newDate };
+}
+
+async function migrateSession(body) {
+  const fromDate = required(body.fromDate, 'fromDate is required.');
+  const toDate = required(body.toDate, 'toDate is required.');
+
+  // Move projects
+  await supabase.from('projects').update({ session_date: toDate }).eq('session_date', fromDate);
+  // Move votes
+  await supabase.from('votes').update({ session_date: toDate }).eq('session_date', fromDate);
+  // Move feed
+  await supabase.from('feed').update({ session_date: toDate }).eq('session_date', fromDate);
+  // Move comments
+  await supabase.from('comments').update({ session_date: toDate }).eq('session_date', fromDate);
+  // Move presence
+  await supabase.from('presence').update({ session_date: toDate }).eq('session_date', fromDate);
+  // Update meta session date
+  await upsertMeta({ sessionDate: toDate });
+
+  return { ok: true, fromDate, toDate };
 }
