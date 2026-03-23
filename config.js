@@ -2,7 +2,7 @@ window.VIBE_CONFIG = {
   appName: "Vibe Coding Lab",
   apiUrl: "https://script.google.com/macros/s/AKfycbwITe6xYyshYKU3vfkBWIeVHN0zDPgryw7CeM_l8zsV_R5yIdFYpqSi0UqsB8WNGrt-/exec",
   sharedPassword: "vibe123",
-  pollMs: 10000,
+  pollMs: 30000,
   heartbeatMs: 30000,
   defaultDemoMinutes: 5,
   defaultVotingSeconds: 30,

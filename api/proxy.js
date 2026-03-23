@@ -1,6 +1,11 @@
 const supabase = require('./_supabase');
 const { rowsToCamel, rowToCamel } = require('./_mappers');
 
+// In-memory cache for session date (avoids hitting meta table on every request)
+let cachedSessionDate = null;
+let cachedAt = 0;
+const SESSION_CACHE_MS = 60 * 1000; // 1 minute
+
 module.exports = async function handler(req, res) {
   try {
     const action = req.query.action || (req.body && req.body.action) || '';
@@ -95,6 +100,11 @@ function formatDate(d) {
 }
 
 async function getSessionDate() {
+  // Return cached value if fresh (avoids DB hit on every request)
+  if (cachedSessionDate && (Date.now() - cachedAt) < SESSION_CACHE_MS) {
+    return cachedSessionDate;
+  }
+
   const { data } = await supabase
     .from('meta')
     .select('value')
@@ -103,11 +113,15 @@ async function getSessionDate() {
 
   const stored = data?.value;
   if (stored && stored.trim() !== '') {
+    cachedSessionDate = stored;
+    cachedAt = Date.now();
     return stored;
   }
 
   const defaultDate = getDefaultSessionDate();
   await upsertMeta({ sessionDate: defaultDate });
+  cachedSessionDate = defaultDate;
+  cachedAt = Date.now();
   return defaultDate;
 }
 
@@ -120,33 +134,45 @@ async function upsertMeta(entries) {
   }));
   const { error } = await supabase.from('meta').upsert(rows, { onConflict: 'key' });
   if (error) throw error;
+  // Invalidate session date cache if it was updated
+  if ('sessionDate' in entries) {
+    cachedSessionDate = entries.sessionDate;
+    cachedAt = Date.now();
+  }
 }
 
 // --- Action handlers ---
 
 async function bootstrap(viewer) {
-  const sessionDate = await getSessionDate();
+  // Fetch meta first (single query) — extracts session date + all meta in one shot
+  const metaRes = await supabase.from('meta').select('*');
+  const meta = {};
+  (metaRes.data || []).forEach((row) => { meta[row.key] = row.value; });
 
-  // Batch 1: core data (5 queries)
-  const [usersRes, projectsRes, metaRes, ppRes, heartsRes] = await Promise.all([
+  const sessionDate = meta.sessionDate || getDefaultSessionDate();
+  cachedSessionDate = sessionDate;
+  cachedAt = Date.now();
+
+  // Single batch: 7 queries (down from 10)
+  const [usersRes, projectsRes, ppRes, votesRes, feedRes, presenceRes, leaderboardRes] = await Promise.all([
     supabase.from('users').select('*'),
     supabase.from('projects').select('*').eq('session_date', sessionDate),
-    supabase.from('meta').select('*'),
     supabase.from('project_presenters').select('*'),
-    supabase.from('feed_hearts').select('*'),
-  ]);
-
-  // Batch 2: session-scoped data (5 queries)
-  const [votesRes, feedRes, commentsRes, presenceRes, leaderboardRes] = await Promise.all([
     supabase.from('votes').select('*').eq('session_date', sessionDate),
-    supabase.from('feed').select('*').eq('session_date', sessionDate).order('created_at', { ascending: false }),
-    supabase.from('comments').select('*').eq('session_date', sessionDate).order('created_at', { ascending: true }),
+    supabase.from('feed').select('*').eq('session_date', sessionDate).order('created_at', { ascending: false }).limit(50),
     supabase.from('presence').select('*').eq('session_date', sessionDate).gte('last_seen_at', new Date(Date.now() - 2 * 60 * 1000).toISOString()),
     supabase.from('leaderboard').select('*').eq('session_date', sessionDate),
   ]);
 
-  const meta = {};
-  (metaRes.data || []).forEach((row) => { meta[row.key] = row.value; });
+  // Fetch comments + hearts only if there's feed data (conditional queries)
+  let commentsRes = { data: [] };
+  let heartsRes = { data: [] };
+  if (feedRes.data && feedRes.data.length > 0) {
+    [commentsRes, heartsRes] = await Promise.all([
+      supabase.from('comments').select('*').eq('session_date', sessionDate).order('created_at', { ascending: true }),
+      supabase.from('feed_hearts').select('*'),
+    ]);
+  }
 
   // Build a map of project_id -> all presenter names
   const presentersByProject = {};
